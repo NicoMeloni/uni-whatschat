@@ -56,6 +56,15 @@ def create_key_exchange_packet(sender: str, receiver: str, public_key: bytes) ->
     }
     return json.dumps(packet).encode('utf-8')
 
+def create_exit_packet(sender: str, receiver: str) -> bytes:
+    """NOVO: Avisa o outro lado que a conexão foi encerrada."""
+    packet = {
+        "type": "EXIT",
+        "sender": sender,
+        "receiver": receiver
+    }
+    return json.dumps(packet).encode('utf-8')
+
 def parse_packet(data: bytes) -> dict:
     """Transforma bytes recebidos de volta em dicionário."""
     try:

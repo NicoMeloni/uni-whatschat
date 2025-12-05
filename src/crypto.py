@@ -6,29 +6,27 @@ from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
 
-# Tipos para ajudar na leitura
+# tipos para ajudar na leitura
 PublicKey = bytes
 PrivateKey = dh.DHPrivateKey
 SharedKey = bytes
 
 def generate_dh_parameters() -> dh.DHParameters:
     """
-    Gera os parâmetros p e g do Diffie-Hellman.
-    Idealmente, o servidor gera isso uma vez e compartilha com todos,
-    ou usa-se um padrão (RFC 3526).
+    Gera os parâmetros p e q do Diffie-Hellman.
     """
     print("[CRYPTO] Gerando parâmetros Diffie-Hellman (isso pode demorar um pouco)...")
     return dh.generate_parameters(generator=2, key_size=2048)
 
 def generate_dh_keys(parameters: dh.DHParameters) -> tuple[PrivateKey, PublicKey]:
     """
-    Gera o par de chaves (Privada, Pública) para um usuário.
-    Retorna a chave privada (objeto) e a pública serializada em bytes (para envio).
+    Gera o par de chaves (pk, sk) para um usuário.
+    Retorna a chave privada e a pública serializada em bytes.
     """
     private_key = parameters.generate_private_key()
     public_key = private_key.public_key()
     
-    # Serializa a pública para enviar pela rede (formato PEM)
+    # serializa a pública para enviar pela rede (formato PEM)
     public_key_bytes = public_key.public_bytes(
         encoding=Encoding.PEM,
         format=PublicFormat.SubjectPublicKeyInfo
@@ -40,17 +38,17 @@ def compute_shared_secret(my_private_key: PrivateKey, peer_public_key_bytes: byt
     Calcula o segredo compartilhado usando a chave privada local e a pública do outro.
     Deve retornar uma chave derivada (ex: usando HKDF) pronta para uso no HMAC.
     """
-    # Desserializa a chave pública do colega (de bytes PEM para objeto)
+    # desserializa a chave pública (de bytes para objeto)
     peer_public_key = load_pem_public_key(peer_public_key_bytes)
     
-    # Realiza o cálculo matemático do DH (troca)
+    # realiza o cálculo do DH (troca de chaves)
     shared_secret = my_private_key.exchange(peer_public_key)
     
-    # Derivação de chave (HKDF) para transformar o segredo matemático em bytes uniformes
+    # derivação de chave para transformar o segredo em bytes
     derived_key = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=None, # Nenhum salt por enquanto
+        salt=None, # nenhum salt por enquanto (pra sempre)
         info=b'whatschat handshake',
     ).derive(shared_secret)
     
@@ -66,9 +64,8 @@ def generate_hmac(key: SharedKey, message: str) -> str:
 
 def verify_hmac(key: SharedKey, message: str, received_mac: str) -> bool:
     """
-    Verifica se o HMAC recebido bate com o cálculo local.
+    Verifica se o HMAC recebido bate com o cálculo que foi feito.
     Retorna True se íntegro, False se violado.
     """
     expected_mac = generate_hmac(key, message)
-    # compare_digest evita ataques de tempo (timing attacks)
     return hmac.compare_digest(expected_mac, received_mac)
