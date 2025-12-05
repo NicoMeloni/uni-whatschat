@@ -9,6 +9,7 @@ CA_KEY = os.path.join(CERTS_DIR, "ca.key")
 SUBJ_BASE = "/C=BR/ST=DF/L=Brasilia/O=UNB/OU=Seguranca/CN="
 
 def create_user(username):
+    username = username.lower()
     print(f"[*] Criando credenciais para: {username}")
     
     key_path = os.path.join(CERTS_DIR, f"{username}.key")

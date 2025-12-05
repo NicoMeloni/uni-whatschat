@@ -29,9 +29,7 @@ CA_PATH = f"{CERTS_DIR}/ca.crt"
 # Estado Global do Cliente
 my_username = ""
 client_socket = None
-# Armazena as chaves de sessão: {'Bob': b'segredo_compartilhado_xyz...'}
 session_keys = {} 
-# Armazena minha chave privada temporária para terminar o handshake: {'Bob': private_key_obj}
 temp_private_keys = {}
 
 def receive_messages():
@@ -41,11 +39,13 @@ def receive_messages():
             raw_data = recv_packet(client_socket)
             if not raw_data:
                 print_security_alert("Conexão com o servidor perdida!")
-                os._exit(1) # Mata o programa se cair a conexão
+                os._exit(1)
             
             packet = parse_packet(raw_data)
             msg_type = packet.get("type")
-            sender = packet.get("sender")
+            
+            # FIX: Normaliza quem enviou para minúsculo para evitar duplicação Alice/alice
+            sender = packet.get("sender", "").lower()
 
             if msg_type == "MSG":
                 handle_incoming_chat(sender, packet)
@@ -65,44 +65,40 @@ def receive_messages():
             break
 
 def handle_key_exchange(sender, packet):
-    """
-    Lida com o recebimento de chave pública (Handshake Diffie-Hellman).
-    Funciona tanto para quem RECEBE o pedido quanto para quem INICIOU.
-    """
+    """Lida com o recebimento de chave pública (Handshake Diffie-Hellman)."""
     peer_pub_pem_str = packet.get("public_key")
     if not peer_pub_pem_str:
         return
 
-    # Converte string PEM de volta para bytes para a lib de criptografia
     peer_pub_bytes = peer_pub_pem_str.encode('utf-8')
 
-    # Cenário 1: Eu sou o Bob e a Alice quer falar comigo (Não tenho chave privada pra ela ainda)
+    # FIX: sender já vem com .lower() do receive_messages
+    
+    # Cenário 1: Sou o RECEPTOR (Bob). Alice quer falar comigo.
+    # Se eu não tenho uma chave privada temporária guardada pra ela, é um pedido novo.
     if sender not in temp_private_keys:
         print_system_info(f"Recebida solicitação de canal seguro de {sender}...")
         
-        # 1. Extraio os parâmetros DH da chave dela (para ser compatível)
         peer_pub_obj = load_pem_public_key(peer_pub_bytes)
         params = peer_pub_obj.parameters()
         
-        # 2. Gero meu par de chaves usando os mesmos parâmetros
         my_priv, my_pub_bytes = generate_dh_keys(params)
         
-        # 3. Calculo o segredo final
         shared_secret = compute_shared_secret(my_priv, peer_pub_bytes)
         session_keys[sender] = shared_secret
         
-        # 4. Envio minha chave pública de volta para completar o ciclo
-        resp_packet = create_key_exchange_packet(my_username, sender, my_pub_bytes)
+        # Envio minha chave de volta
+        # FIX: Envio meu nome e o destino sempre em minúsculo
+        resp_packet = create_key_exchange_packet(my_username.lower(), sender, my_pub_bytes)
         send_packet(client_socket, resp_packet)
         
         print_system_info(f"Chaves trocadas! Canal seguro estabelecido com {sender}.")
     
-    # Cenário 2: Eu sou a Alice, iniciei o papo e o Bob respondeu
+    # Cenário 2: Sou o INICIADOR (Alice). Bob respondeu meu convite.
     else:
         # Recupero a chave privada que guardei quando mandei o convite
         my_priv = temp_private_keys.pop(sender)
         
-        # Calculo o segredo final
         shared_secret = compute_shared_secret(my_priv, peer_pub_bytes)
         session_keys[sender] = shared_secret
         print_system_info(f"Handshake concluído! Canal seguro pronto com {sender}.")
@@ -112,108 +108,102 @@ def handle_incoming_chat(sender, packet):
     content = packet.get("content")
     received_hmac = packet.get("hmac")
     
-    # Verifica se temos um segredo compartilhado com esse remetente
     if sender not in session_keys:
-        print_security_alert(f"Mensagem recebida de {sender} SEM sessão segura estabelecida. Ignorada.")
+        print_security_alert(f"Mensagem de {sender} ignorada (Sem sessão segura).")
         return
 
     secret = session_keys[sender]
     
-    # --- VERIFICAÇÃO DE INTEGRIDADE (O Requisito do HMAC) ---
+    # --- VERIFICAÇÃO DE INTEGRIDADE ---
     is_valid = verify_hmac(secret, content, received_hmac)
     
     if is_valid:
         print_verified_message(sender, content)
     else:
-        print_security_alert(f"MENSAGEM VIOLADA DE {sender}! HMAC inválido. O conteúdo pode ter sido alterado.")
+        print_security_alert(f"MENSAGEM VIOLADA DE {sender}! HMAC inválido.")
 
 def start_chat_initiation(target_user):
-    """
-    Inicia o processo de troca de chaves (Diffie-Hellman) com outro usuário.
-    """
-    if target_user == my_username:
+    """Inicia o processo de troca de chaves."""
+    # FIX: Garante que o alvo é minúsculo
+    target_user = target_user.lower()
+
+    if target_user == my_username.lower():
         print_security_alert("Você não pode falar consigo mesmo.")
         return
 
     print_system_info(f"Iniciando negociação de chaves com {target_user}...")
     
-    # 1. Gera parâmetros e chaves (pode demorar um pouco se for 2048 bits)
-    # Nota: Em produção real, os parametros p e g seriam fixos/carregados de arquivo para ser rápido.
     params = generate_dh_parameters() 
     my_priv, my_pub_bytes = generate_dh_keys(params)
     
-    # 2. Guarda a privada temporariamente esperando a resposta
+    # Guarda chave privada esperando resposta
     temp_private_keys[target_user] = my_priv
     
-    # 3. Envia a pública para o servidor repassar
-    packet = create_key_exchange_packet(my_username, target_user, my_pub_bytes)
+    # FIX: Envia nomes normalizados
+    packet = create_key_exchange_packet(my_username.lower(), target_user, my_pub_bytes)
     send_packet(client_socket, packet)
 
 def send_chat_message(target_user, msg):
     """Cria o HMAC e envia a mensagem."""
+    # FIX: Normaliza alvo
+    target_user = target_user.lower()
+
     if target_user not in session_keys:
-        print_security_alert(f"Você ainda não tem um canal seguro com {target_user}. Use /chat {target_user} primeiro.")
+        print_security_alert(f"Sem canal seguro com {target_user}. Use /chat {target_user} primeiro.")
         return
 
     secret = session_keys[target_user]
     
-    # --- GARANTIA DE INTEGRIDADE ---
-    # Assina a mensagem com a chave que só eu e ele temos
+    # Assina e envia
     hmac_sig = generate_hmac(secret, msg)
     
-    packet_bytes = create_message_packet(my_username, target_user, msg, hmac_sig)
+    # FIX: Envia nomes normalizados
+    packet_bytes = create_message_packet(my_username.lower(), target_user, msg, hmac_sig)
     send_packet(client_socket, packet_bytes)
-    # print(f"(Você -> {target_user}): {msg}") # Opcional: mostrar o que eu enviei
 
 def main():
     global client_socket, my_username
     
     if len(sys.argv) < 2:
         print(f"Uso: python client.py <nome_usuario>")
-        print("Exemplo: python client.py Alice")
         return
 
-    my_username = sys.argv[1]
+    # Nome do arquivo (Case Sensitive no Linux para carregar o arquivo)
+    username_file_input = sys.argv[1]
     
-    # Define caminhos baseados no nome do usuário
-    my_cert = f"{CERTS_DIR}/{my_username}.crt"
-    my_key = f"{CERTS_DIR}/{my_username}.key"
+    # Nome lógico (Para o chat, sempre minúsculo)
+    my_username = username_file_input.lower()
+    
+    # Carrega arquivos usando o nome exato do arquivo (pode ser Alice.crt)
+    my_cert = f"{CERTS_DIR}/{username_file_input}.crt"
+    my_key = f"{CERTS_DIR}/{username_file_input}.key"
 
-    # Validação básica
     if not os.path.exists(my_cert) or not os.path.exists(my_key):
-        print_security_alert(f"Certificados para '{my_username}' não encontrados em {CERTS_DIR}/")
-        print("Use o script create_user.py para gerar primeiro.")
+        print_security_alert(f"Certificados para '{username_file_input}' não encontrados.")
         return
 
-    print_system_info(f"Carregando cliente seguro para: {my_username}...")
+    print_system_info(f"Carregando cliente seguro para: {username_file_input}...")
 
-    # --- CONEXÃO SSL (Requisito: Autenticação mútua) ---
     try:
         context = create_client_ssl_context(my_cert, my_key, CA_PATH)
         raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
-        # Conecta envelopado com TLS
         client_socket = context.wrap_socket(raw_socket, server_hostname='localhost')
         client_socket.connect((HOST, PORT))
-        
         print_system_info(f"Conectado com segurança ao servidor {HOST}:{PORT}")
-        
     except Exception as e:
         print_security_alert(f"Falha na conexão: {e}")
         return
 
-    # Inicia a thread que ouve o servidor
     t = threading.Thread(target=receive_messages, daemon=True)
     t.start()
 
     print("\n--- COMANDOS ---")
     print("/list             -> Ver usuários online")
-    print("/chat <usuario>   -> Criar canal seguro (Troca de chaves)")
-    print("/msg <user> <txt> -> Enviar mensagem segura")
+    print("/chat <usuario>   -> Criar canal seguro")
+    print("/msg <user> <txt> -> Enviar mensagem")
     print("/exit             -> Sair")
     print("----------------\n")
 
-    # Loop principal de input do usuário
     while True:
         try:
             cmd = input()
@@ -223,11 +213,9 @@ def main():
             command = parts[0].lower()
 
             if command == "/list":
-                # Envia pedido de lista (JSON manual simples)
-                # Precisamos importar json aqui ou usar uma funcao do protocol
-                # Vamos fazer um packet manual pra simplificar pois nao criamos helper pra LIST
                 import json
-                pkt = {"type": "LIST", "sender": my_username}
+                # FIX: envia sender normalizado
+                pkt = {"type": "LIST", "sender": my_username.lower()}
                 send_packet(client_socket, json.dumps(pkt).encode('utf-8'))
 
             elif command == "/chat":
@@ -240,14 +228,10 @@ def main():
                 if len(parts) < 3:
                     print("Uso: /msg <nome_do_usuario> <mensagem...>")
                 else:
-                    target = parts[1]
-                    message = " ".join(parts[2:])
-                    send_chat_message(target, message)
+                    send_chat_message(parts[1], " ".join(parts[2:]))
 
             elif command == "/exit":
-                print("Saindo...")
                 break
-            
             else:
                 print("Comando inválido.")
 
