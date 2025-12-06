@@ -8,6 +8,7 @@ CA_KEY = os.path.join(CERTS_DIR, "ca.key")
 
 SUBJ_BASE = "/C=BR/ST=DF/L=Brasilia/O=UNB/OU=Seguranca/CN="
 
+# essa função simplesmente automatiza a geração de certificados e chaves com openssl
 def create_user(username):
     username = username.lower()
     print(f"[*] Criando credenciais para: {username}")
@@ -16,23 +17,23 @@ def create_user(username):
     csr_path = os.path.join(CERTS_DIR, f"{username}.csr")
     crt_path = os.path.join(CERTS_DIR, f"{username}.crt")
 
-    # Gerar Chave Privada
+    #gerar sk
     subprocess.run(["openssl", "genrsa", "-out", key_path, "2048"], check=True)
 
-    # Gerar CSR (Requisição)
+    # gerar CSR requisição
     subj = f"{SUBJ_BASE}{username}"
     subprocess.run([
         "openssl", "req", "-new", "-key", key_path, "-out", csr_path, "-subj", subj
     ], check=True)
 
-    # Assinar com a CA (Gerar CRT)
+    # assinar com a autoridade certificadora
     subprocess.run([
         "openssl", "x509", "-req", "-in", csr_path, 
         "-CA", CA_CRT, "-CAkey", CA_KEY, "-CAcreateserial",
         "-out", crt_path, "-days", "365", "-sha256"
     ], check=True)
 
-    # Limpeza
+    # limpeza
     if os.path.exists(csr_path):
         os.remove(csr_path)
 

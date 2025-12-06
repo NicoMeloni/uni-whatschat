@@ -4,6 +4,7 @@ import sys
 import os
 import time
 import curses
+import json
 from collections import defaultdict
 from datetime import datetime
 
@@ -97,12 +98,13 @@ class ChatClientApp:
             self.handle_exit_notification(sender)
 
     def handle_exit_notification(self, sender):
-        """O outro usuário encerrou o chat."""
-        # 1. Remove a chave imediatamente (Status na Home vira branco)
+        # essa função serve para que a interface mostre que o usuario do outro lado se desconectou com o /exit
+        # deixa de aparecer [CONECTADO] no usuário (que tinha dado /exit) na tela principal 
+        # remove a chave 
         if sender in self.session_keys:
             del self.session_keys[sender]
         
-        # 2. Avisa no chat atual
+        # avisa no chat atual
         timestamp = datetime.now().strftime("%H:%M")
         msg = f"🚫 O usuário {sender} desconectou. Pressione ESC para sair."
         self.history[sender].append(("sys", msg, timestamp))
@@ -110,27 +112,46 @@ class ChatClientApp:
 
     def handle_dh(self, sender, packet):
         peer_pub_pem = packet.get("public_key")
-        if not peer_pub_pem: return
+        if not peer_pub_pem: 
+            return
         peer_bytes = peer_pub_pem.encode('utf-8')
         timestamp = datetime.now().strftime("%H:%M")
 
-        if sender not in self.temp_private_keys: # Receptor
+        # verifica se sou o RECEPTOR: se não tenho chave privada guardada para esse remetente, significa que ele quer iniciar uma conexão comigo.
+        if sender not in self.temp_private_keys: 
             self.system_msg = f"Recebendo conexão de {sender}..."
+            
+            # extraimos os parâmetros (p e g) da chave pública dele
             peer_obj = load_pem_public_key(peer_bytes)
             params = peer_obj.parameters()
+            
+            #Gera meu par de chaves usando os parâmetros recebidos
             my_priv, my_pub_bytes = generate_dh_keys(params)
+            
+            # calcula o segredo compartilhado imediatamente (pois já tenho as duas partes necessárias)
             secret = compute_shared_secret(my_priv, peer_bytes)
             self.session_keys[sender] = secret
+            
+            # envia minha chave pública de volta para completar o handshake
             pkt = create_key_exchange_packet(self.username, sender, my_pub_bytes)
             send_packet(self.sock, pkt)
+            
             self.history[sender].append(("sys", "🔒 Canal Seguro DH estabelecido!", timestamp))
-        else: # Iniciador
+            
+        else: # quem começou o chat
+            # Recupera e remove (pop) a chave privada temporária que guardei ao enviar o convite
+            # o pop é importante para garantir mais segurança (n vazar a chave)
             my_priv = self.temp_private_keys.pop(sender)
+            
+            #agora que recebi a resposta, posso calcular o segredo final
             secret = compute_shared_secret(my_priv, peer_bytes)
             self.session_keys[sender] = secret
+            
             self.history[sender].append(("sys", "🔒 Canal Seguro DH estabelecido!", timestamp))
 
+    
     def handle_msg(self, sender, packet):
+        # função para lidar com as mensagens de texto (lida mais com a parte do backend)
         content = packet.get("content")
         hmac_sig = packet.get("hmac")
         timestamp = datetime.now().strftime("%H:%M")
@@ -139,14 +160,20 @@ class ChatClientApp:
             # Se chegou msg mas chave foi apagada, ignora ou avisa erro
             return
 
+        # ja temos a chave de sessão pois tivemos que fazer a troca antes de podermos sequer enviar uma msg
         secret = self.session_keys[sender]
+
+        #Garantia de integridade!!!
         if verify_hmac(secret, content, hmac_sig):
             self.history[sender].append(("recv", content, timestamp))
         else:
             self.history[sender].append(("sys", "ALERTA: INTEGRIDADE FALHOU", timestamp))
 
     def start_chat_with(self, target):
+        # target aqui é o nome de usuário a quem queremos conectar (alvo), mantemos todos minúsculos para não dar problema com o .crt
         target = target.lower()
+
+        # Se já há uma conexão estabelecida com esse alvo, simplesmente muda de tela
         if target in self.session_keys:
             self.chat_target = target
             self.current_screen = "CHAT"
@@ -154,28 +181,35 @@ class ChatClientApp:
             if hasattr(self, 'stdscr'): self.stdscr.clear()
             return
 
-        # Inicia negociação
+        # caso contrário, DIFFIE HELLMAMN
         self.system_msg = f"Negociando com {target}..."
         params = generate_dh_parameters()
         my_priv, my_pub_bytes = generate_dh_keys(params)
+        # salva a sk por enquanto
         self.temp_private_keys[target] = my_priv
         
+        # enviando minha pk 
         pkt = create_key_exchange_packet(self.username, target, my_pub_bytes)
         send_packet(self.sock, pkt)
         
-        # Limpa histórico antigo se for conexão nova
+        # limpa histórico antigo com o usuario se for conexão nova (reconexão por exemplo)
         self.history[target] = []
         
+        # configurações pra interface grafica
         self.chat_target = target
         self.current_screen = "CHAT"
         self.input_buffer = ""
-        if hasattr(self, 'stdscr'): self.stdscr.clear()
+        if hasattr(self, 'stdscr'): 
+            self.stdscr.clear()
 
     def send_chat_message(self):
+        # Para enviar mensagem pro chat
         msg = self.input_buffer.strip()
         target = self.chat_target
-        if not msg: return
+        if not msg: 
+            return
 
+        # comando de desconexão (apaga a chave de sessão e sai da aba de chat com aql usuario)
         if msg == "/exit":
             self.close_current_chat(notify_peer=True)
             return
@@ -184,6 +218,7 @@ class ChatClientApp:
             self.history[target].append(("sys", "Erro: Sem conexão segura.", datetime.now().strftime("%H:%M")))
             return
 
+        #Envia a msg com hmac (integridade!!!) e chave de sessao (confidencialidade!!)
         secret = self.session_keys[target]
         hmac_sig = generate_hmac(secret, msg)
         pkt_bytes = create_message_packet(self.username, target, msg, hmac_sig)
@@ -198,9 +233,11 @@ class ChatClientApp:
             pkt = create_exit_packet(self.username, target)
             send_packet(self.sock, pkt)
 
-        # Apaga TUDO (chaves e histórico) pois fui EU que saí
-        if target in self.session_keys: del self.session_keys[target]
-        if target in self.history: del self.history[target]
+        # Apaga chaves e histórico com o usuario de quem estou me desconectando
+        if target in self.session_keys:
+            del self.session_keys[target]
+        if target in self.history: 
+            del self.history[target]
         
         self.chat_target = None
         self.current_screen = "HOME"
@@ -209,7 +246,7 @@ class ChatClientApp:
         self.system_msg = f"Chat encerrado."
 
     def refresh_user_list(self):
-        import json
+        # para pegar a lista de usuários conectados atual
         pkt = {"type": "LIST", "sender": self.username}
         send_packet(self.sock, json.dumps(pkt).encode('utf-8'))
 
@@ -218,9 +255,9 @@ class ChatClientApp:
         if not hasattr(self, 'stdscr') or self.stdscr is None:
             return
         
+        #configurações de interface grafica do curses
         self.stdscr.erase()
         h, w = self.stdscr.getmaxyx()
-        # Cores: 1=Cyan(Status), 2=Green(Ok/Msg), 3=Red(Alert), 4=Yellow(Select)
         curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
         curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
         curses.init_pair(3, curses.COLOR_RED, curses.COLOR_BLACK)
@@ -235,6 +272,7 @@ class ChatClientApp:
         self.stdscr.refresh()
 
     def draw_home(self, h, w):
+        # mais configurações de interface grafica (tela principal)
         title = r"""
  __      __  .__            __         _________ .__            __   
 /  \    /  \ |  |__ _____ _/  |_  _____\_   ___ \|  |__ _____ _/  |_ 
@@ -258,7 +296,7 @@ class ChatClientApp:
         
         for idx, user in enumerate(self.online_users):
             if y >= h-2: break
-            is_connected = user.lower() in self.session_keys
+            is_connected = user.lower() in self.session_keys # valor booleano para alterar a interface conforme ha conexao entre 2 usuarios
             style = curses.color_pair(2) if is_connected else curses.color_pair(5)
             status_txt = " [CONECTADO]" if is_connected else ""
             prefix = " > " if idx == self.selected_user_index else "   "
@@ -268,6 +306,7 @@ class ChatClientApp:
             y += 1
 
     def draw_chat(self, h, w):
+        # config de interface do chat
         is_conn = self.chat_target in self.session_keys
         status_txt = "[CONECTADO]" if is_conn else "[DESCONECTADO]"
         color = curses.color_pair(2) if is_conn else curses.color_pair(3)
@@ -289,11 +328,11 @@ class ChatClientApp:
         self.stdscr.addstr(h-3, 0, "-" * (w-1))
         prompt = f"Msg > {self.input_buffer}"
         if len(prompt) > w-1: prompt = prompt[-(w-1):]
-        # Se desconectado, input fica vermelho
         input_color = curses.color_pair(5) if is_conn else curses.color_pair(3)
         try: self.stdscr.addstr(h-2, 0, prompt, input_color|curses.A_BOLD)
         except: pass
 
+    # outras configs de interface...
     def run_curses(self, stdscr):
         self.stdscr = stdscr
         curses.curs_set(1)
@@ -317,15 +356,19 @@ class ChatClientApp:
 
     def handle_input(self, key):
         if self.current_screen == "HOME":
-            if key == curses.KEY_UP: self.selected_user_index = max(0, self.selected_user_index - 1)
-            elif key == curses.KEY_DOWN: self.selected_user_index = min(len(self.online_users) - 1, self.selected_user_index + 1)
+            if key == curses.KEY_UP: 
+                self.selected_user_index = max(0, self.selected_user_index - 1)
+            elif key == curses.KEY_DOWN: 
+                self.selected_user_index = min(len(self.online_users) - 1, self.selected_user_index + 1)
             elif key == 10:
-                if self.online_users: self.start_chat_with(self.online_users[self.selected_user_index])
-            elif key == 27: self.running = False
+                if self.online_users: 
+                    self.start_chat_with(self.online_users[self.selected_user_index])
+            elif key == 27: 
+                self.running = False
 
         elif self.current_screen == "CHAT":
             if key == 27: # ESC
-                # FIX: Se a conexão morreu (chave deletada pelo Exit do outro), APAGA O HISTÓRICO ao sair
+                # apaga o historico caso n haja mais conexao
                 if self.chat_target not in self.session_keys:
                     self.history[self.chat_target] = []
                 
@@ -339,6 +382,7 @@ class ChatClientApp:
             elif 32 <= key <= 126: self.input_buffer += chr(key)
     
     def close(self):
+        # funcao simples para fechar corretamente e evitar erros
         self.running = False
         if self.sock:
             try:
@@ -351,19 +395,26 @@ def main():
     if len(sys.argv) < 2:
         print("Uso: python3 src/client.py <username>")
         return
+    
     username = sys.argv[1]
     app = ChatClientApp(username)
     ok, msg = app.connect()
+
     if not ok:
-        print(f"Erro: {msg}"); return
+        print(f"Erro: {msg}")
+        return
+    
     t = threading.Thread(target=app.network_loop, daemon=True)
     t.start()
+
     try: 
         curses.wrapper(app.run_curses)
+
     except KeyboardInterrupt: 
         pass
+
     finally: 
-        app.running = False
+        # app.running = False
         app.close()
         print("Saindo...")
 

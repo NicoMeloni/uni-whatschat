@@ -1,20 +1,18 @@
 import hmac
 import hashlib
-import os
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import dh
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
 
-# tipos para ajudar na leitura
+# tipos
 PublicKey = bytes
 PrivateKey = dh.DHPrivateKey
 SharedKey = bytes
 
 def generate_dh_parameters() -> dh.DHParameters:
-    """
-    Gera os parâmetros p e q do Diffie-Hellman.
-    """
+    #Gera os parâmetros p (primo) e g (gerador) do Diffie-Hellman
+    
     print("[CRYPTO] Gerando parâmetros Diffie-Hellman (isso pode demorar um pouco)...")
     return dh.generate_parameters(generator=2, key_size=2048)
 
@@ -36,7 +34,7 @@ def generate_dh_keys(parameters: dh.DHParameters) -> tuple[PrivateKey, PublicKey
 def compute_shared_secret(my_private_key: PrivateKey, peer_public_key_bytes: bytes) -> SharedKey:
     """
     Calcula o segredo compartilhado usando a chave privada local e a pública do outro.
-    Deve retornar uma chave derivada (ex: usando HKDF) pronta para uso no HMAC.
+    Deve retornar uma chave derivada pronta para uso no HMAC.
     """
     # desserializa a chave pública (de bytes para objeto)
     peer_public_key = load_pem_public_key(peer_public_key_bytes)
@@ -57,7 +55,7 @@ def compute_shared_secret(my_private_key: PrivateKey, peer_public_key_bytes: byt
 def generate_hmac(key: SharedKey, message: str) -> str:
     """
     Cria uma assinatura HMAC-SHA256 para a mensagem.
-    Retorna a assinatura em formato Hexadecimal (string).
+    Retorna a assinatura em formato hexadecimal.
     """
     h = hmac.new(key, message.encode('utf-8'), hashlib.sha256)
     return h.hexdigest()
