@@ -350,7 +350,10 @@ class ChatClientApp:
             if key != -1: self.handle_input(key)
             
             if self.current_screen == "HOME" and (time.time()-last_refresh > 2):
-                self.refresh_user_list()
+                try:
+                    self.refresh_user_list()
+                except:
+                    pass # Se a rede cair, apenas ignora e não derruba o app
                 last_refresh = time.time()
             time.sleep(0.03)
 

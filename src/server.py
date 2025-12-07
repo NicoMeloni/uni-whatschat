@@ -144,6 +144,9 @@ def start_server():
         f"{CERTS_DIR}/server.key",
         f"{CERTS_DIR}/ca.crt"
     )
+    # Forçando segurança
+    context.verify_mode = ssl.CERT_REQUIRED    # <--- Força exigir certificado
+    print(f"[DEBUG] Modo de Verificação SSL: {context.verify_mode}") # <--- Vai imprimir 2 se estiver certo
 
     # cria socket TCP
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
