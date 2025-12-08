@@ -353,7 +353,7 @@ class ChatClientApp:
                 try:
                     self.refresh_user_list()
                 except:
-                    pass # Se a rede cair, apenas ignora e não derruba o app
+                    pass
                 last_refresh = time.time()
             time.sleep(0.03)
 

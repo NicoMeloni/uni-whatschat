@@ -6,16 +6,16 @@ def create_server_ssl_context(cert_path: str, key_path: str, ca_path: str) -> ss
     - Deve exigir certificado do cliente (CERT_REQUIRED).
     - Deve carregar a CA para verificar os clientes.
     """
-    # Cria contexto configurado para quem VAI AUTENTICAR clientes
+    # cria contexto configurado para quem VAI AUTENTICAR clientes
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     
-    # 1. Carrega a identidade do Servidor (Para o cliente saber que é o server certo)
+    # carrega a identidade do servidor
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
     
-    # 2. Carrega a CA (Para o servidor saber validar o crachá da Alice)
+    # carrega a CA
     context.load_verify_locations(cafile=ca_path)
     
-    # 3. FORÇA o mTLS: O servidor rejeitará conexões sem certificado (Requisito de Autenticidade)
+    # FORÇA o mTLS: O servidor rejeitará conexões sem certificado (autenticidade)
     context.verify_mode = ssl.CERT_REQUIRED    
     
     return context
@@ -26,13 +26,13 @@ def create_client_ssl_context(cert_path: str, key_path: str, ca_path: str) -> ss
     - Deve carregar o certificado do próprio cliente (para se autenticar no server).
     - Deve carregar a CA (para confiar no server).
     """
-    # Cria contexto configurado para quem VAI SE CONECTAR a um servidor
+    #cria contexto configurado para quem VAI SE CONECTAR a um servidor
     context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
     
-    # 1. Carrega a CA (Para o cliente validar que o servidor é confiável)
+    # carrega a CA
     context.load_verify_locations(cafile=ca_path)
     
-    # 2. Carrega a identidade do Cliente (Para o mTLS: Alice prova quem é)
+    # carrega a identidade do cliente
     context.load_cert_chain(certfile=cert_path, keyfile=key_path)
     
     # context.check_hostname = False

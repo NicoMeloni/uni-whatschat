@@ -34,7 +34,7 @@ def generate_dh_keys(parameters: dh.DHParameters) -> tuple[PrivateKey, PublicKey
 def compute_shared_secret(my_private_key: PrivateKey, peer_public_key_bytes: bytes) -> SharedKey:
     """
     Calcula o segredo compartilhado usando a chave privada local e a pública do outro.
-    Deve retornar uma chave derivada pronta para uso no HMAC.
+    Retorna uma chave derivada pronta para uso no HMAC.
     """
     # desserializa a chave pública (de bytes para objeto)
     peer_public_key = load_pem_public_key(peer_public_key_bytes)
@@ -46,7 +46,7 @@ def compute_shared_secret(my_private_key: PrivateKey, peer_public_key_bytes: byt
     derived_key = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=None, # nenhum salt por enquanto (pra sempre)
+        salt=None, # nenhum salt por enquanto (pra sempre k)
         info=b'whatschat handshake',
     ).derive(shared_secret)
     
@@ -63,7 +63,7 @@ def generate_hmac(key: SharedKey, message: str) -> str:
 def verify_hmac(key: SharedKey, message: str, received_mac: str) -> bool:
     """
     Verifica se o HMAC recebido bate com o cálculo que foi feito.
-    Retorna True se íntegro, False se violado.
+    Retorna True se certo, False se violado.
     """
     expected_mac = generate_hmac(key, message)
     return hmac.compare_digest(expected_mac, received_mac)

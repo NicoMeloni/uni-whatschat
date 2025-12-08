@@ -6,7 +6,7 @@ PORT = 8443
 def test_unauthorized_connection():
     print("--- TESTE DE ATAQUE: CONEXÃO NÃO AUTORIZADA ---")
     
-    # Ataque 1: Conexão "Crua" (Sem SSL)
+    # ataque 1 conn sem sls
     print("\n[ATAQUE 1] Tentando conectar sem SSL (TCP puro)...")
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -20,19 +20,28 @@ def test_unauthorized_connection():
     finally:
         sock.close()
 
-    # Ataque 2: Conexão SSL sem certificado de cliente
+    # ataque 2 conn SSL sem certificado de cliente
     print("\n[ATAQUE 2] Tentando SSL sem certificado de cliente...")
     try:
-        # Contexto vazio (sem load_cert_chain)
+        # contexto vazio (sem load_cert_chain)
         context = ssl.create_default_context()
         context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE # Ignora validação do server, mas não manda cert
+        context.verify_mode = ssl.CERT_NONE # ignora validação do server, mas não manda cert
         
         raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_sock = context.wrap_socket(raw_sock, server_hostname="localhost")
         ssl_sock.settimeout(2)
         
         ssl_sock.connect((HOST, PORT))
+
+        try:
+            ssl_sock.send(b"Teste de intruso")
+            data = ssl_sock.recv(1024)
+            if not data:
+                raise ConnectionResetError("Servidor encerrou a conexão.")
+        except (OSError, ssl.SSLError) as e:
+            raise e
+
         print("[FALHA] O servidor aceitou o handshake SSL sem certificado!")
         ssl_sock.close()
     except ssl.SSLError as e:

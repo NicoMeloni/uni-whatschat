@@ -4,7 +4,6 @@ import time
 import ssl
 import sys
 
-# Importa sua implementação de rede
 from src.network import create_server_ssl_context, create_client_ssl_context
 
 # Configurações de Rede
@@ -55,7 +54,6 @@ def run_server_test():
 
 def run_client_test():
     """Função que simula a Alice tentando conectar"""
-    # Espera um pouco pro servidor subir
     time.sleep(1) 
     print("\n[CLIENT] Tentando conectar...")
 
@@ -65,7 +63,7 @@ def run_client_test():
         # Cria socket TCP puro
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             # Envelopa com SSL
-            # server_hostname='localhost' é crucial para validar o cert do servidor
+            # server_hostname='localhost'
             with context.wrap_socket(sock, server_side=False, server_hostname='localhost') as ssock:
                 ssock.connect((HOST, PORT))
                 print("[CLIENT] ✅ Handshake TLS completo! Conexão Segura estabelecida.")
@@ -80,13 +78,10 @@ def run_client_test():
         print(f"[CLIENT ERROR]: {e}")
 
 if __name__ == "__main__":
-    # Inicia o servidor em uma thread separada
     server_thread = threading.Thread(target=run_server_test)
     server_thread.start()
 
-    # Roda o cliente na thread principal
     run_client_test()
 
-    # Garante que o servidor termine
     server_thread.join()
     print("\n--- Teste Finalizado ---") 
